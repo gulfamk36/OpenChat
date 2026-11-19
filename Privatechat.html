@@ -1,0 +1,1657 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WhisperMesh — Offline Bluetooth Messenger</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            mesh: {
+              bg: '#0b141a',
+              panel: '#111b21',
+              elevated: '#202c33',
+              hover: '#2a3942',
+              border: '#222e35',
+              accent: '#00a884',
+              accentBright: '#25d366',
+              cyan: '#38bdf8',
+              outgoing: '#005c4b',
+              incoming: '#202c33',
+              text: '#e9edef',
+              muted: '#8696a0',
+              danger: '#ef4444',
+              amber: '#f59e0b'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    /* Clean Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(134, 150, 160, 0.25);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(134, 150, 160, 0.45);
+    }
+
+    /* Subtle WhatsApp-style dark wallpaper */
+    .chat-wallpaper {
+      background-color: #0b141a;
+      background-image:
+        radial-gradient(rgba(0, 168, 132, 0.055) 1px, transparent 1px),
+        radial-gradient(rgba(134, 150, 160, 0.04) 1px, #0b141a 1px);
+      background-size: 28px 28px;
+      background-position: 0 0, 14px 14px;
+    }
+
+    /* Anti-Shoulder-Surfing Privacy Blur */
+    .privacy-blur-active .sensitive-text {
+      filter: blur(6px);
+      transition: filter 0.22s ease;
+      user-select: none;
+    }
+    .privacy-blur-active .message-bubble:hover .sensitive-text,
+    .privacy-blur-active .message-bubble.revealed .sensitive-text,
+    .privacy-blur-active .chat-item:hover .sensitive-text {
+      filter: blur(0px);
+    }
+
+    /* Auto-Burn Ember Dissolve Animation */
+    @keyframes burnDissolve {
+      0% {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+        filter: brightness(1) blur(0px);
+      }
+      40% {
+        opacity: 0.92;
+        transform: scale(1.015) translateY(-2px);
+        filter: brightness(1.35) sepia(0.75) hue-rotate(-25deg);
+        box-shadow: 0 0 18px rgba(249, 115, 22, 0.65);
+      }
+      100% {
+        opacity: 0;
+        transform: scale(0.9) translateY(-12px);
+        filter: brightness(0.4) blur(6px);
+      }
+    }
+    .burning-message {
+      animation: burnDissolve 0.75s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
+      pointer-events: none;
+    }
+
+    /* Radar Sweep & Pulse */
+    @keyframes radarSweep {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .radar-sweep {
+      animation: radarSweep 3s linear infinite;
+    }
+    @keyframes pulseRing {
+      0% { transform: scale(0.85); opacity: 0.75; }
+      100% { transform: scale(1.55); opacity: 0; }
+    }
+    .pulse-ring {
+      animation: pulseRing 2.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+    }
+
+    /* Panic Wipe Flash */
+    @keyframes panicFlash {
+      0% { background-color: rgba(239, 68, 68, 0.75); }
+      100% { background-color: transparent; }
+    }
+    .panic-flash {
+      animation: panicFlash 0.75s ease-out forwards;
+    }
+
+    /* Message Entrance */
+    @keyframes msgPop {
+      0% { opacity: 0; transform: translateY(6px) scale(0.985); }
+      100% { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .msg-enter {
+      animation: msgPop 0.2s ease-out forwards;
+    }
+  </style>
+</head>
+<body class="bg-mesh-bg text-mesh-text font-sans h-screen w-screen overflow-hidden flex flex-col select-none">
+
+  <!-- PANIC WIPE OVERLAY -->
+  <div id="panicOverlay" class="fixed inset-0 pointer-events-none z-[100] hidden"></div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div id="toastContainer" class="fixed top-14 right-4 z-[90] flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <!-- APP PIN LOCK SCREEN (Default PIN: 1234) -->
+  <div id="appLockModal" class="fixed inset-0 z-[80] bg-mesh-bg/95 backdrop-blur-xl hidden flex-col items-center justify-center p-6">
+    <div class="max-w-xs w-full bg-mesh-panel border border-mesh-border rounded-2xl p-6 shadow-2xl text-center">
+      <div class="w-14 h-14 rounded-2xl bg-mesh-accent/15 border border-mesh-accent/30 flex items-center justify-center mx-auto mb-4 text-mesh-accentBright">
+        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+      </div>
+      <h2 class="text-lg font-semibold text-white">WhisperMesh Locked</h2>
+      <p class="text-xs text-mesh-muted mt-1">Enter your PIN to unlock your offline chats.</p>
+      <p class="text-[11px] font-mono text-mesh-accent mt-2 bg-mesh-elevated/80 py-1 px-2.5 rounded-lg inline-block">Default PIN: 1234</p>
+
+      <!-- PIN Indicator Dots -->
+      <div id="pinDots" class="flex justify-center gap-3 my-5">
+        <span class="w-3.5 h-3.5 rounded-full border border-mesh-muted transition-all"></span>
+        <span class="w-3.5 h-3.5 rounded-full border border-mesh-muted transition-all"></span>
+        <span class="w-3.5 h-3.5 rounded-full border border-mesh-muted transition-all"></span>
+        <span class="w-3.5 h-3.5 rounded-full border border-mesh-muted transition-all"></span>
+      </div>
+      <p id="pinError" class="text-xs text-mesh-danger h-4 mb-2"></p>
+
+      <!-- PIN Keypad -->
+      <div class="grid grid-cols-3 gap-2.5 text-base font-medium">
+        <button onclick="enterPinDigit('1')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">1</button>
+        <button onclick="enterPinDigit('2')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">2</button>
+        <button onclick="enterPinDigit('3')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">3</button>
+        <button onclick="enterPinDigit('4')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">4</button>
+        <button onclick="enterPinDigit('5')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">5</button>
+        <button onclick="enterPinDigit('6')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">6</button>
+        <button onclick="enterPinDigit('7')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">7</button>
+        <button onclick="enterPinDigit('8')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">8</button>
+        <button onclick="enterPinDigit('9')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">9</button>
+        <button onclick="triggerPanicConfirm()" class="p-3 rounded-xl bg-red-500/15 text-red-400 hover:bg-red-500/25 text-xs font-semibold transition">WIPE</button>
+        <button onclick="enterPinDigit('0')" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover active:scale-95 transition">0</button>
+        <button onclick="clearPinDigit()" class="p-3 rounded-xl bg-mesh-elevated hover:bg-mesh-hover text-mesh-muted transition flex items-center justify-center" aria-label="Backspace">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP STATUS BAR -->
+  <header class="h-12 bg-[#091015] border-b border-mesh-border px-3 sm:px-5 flex items-center justify-between text-xs shrink-0 z-30">
+    <!-- Left: Offline Bluetooth Mesh Indicator -->
+    <div class="flex items-center gap-2.5 overflow-hidden">
+      <button onclick="openRadarModal()" class="flex items-center gap-2 bg-mesh-accent/15 hover:bg-mesh-accent/25 border border-mesh-accent/30 text-mesh-accentBright px-3 py-1.5 rounded-full font-medium transition shrink-0" title="Open Bluetooth Radar Scanner">
+        <span class="w-2 h-2 rounded-full bg-mesh-accentBright animate-pulse"></span>
+        <span id="topStatusSummary" class="truncate">Offline • Bluetooth Mesh Active • 3 Nearby</span>
+      </button>
+    </div>
+
+    <!-- Right: Sound, Privacy Shield, Lock, Panic Wipe -->
+    <div class="flex items-center gap-2 shrink-0">
+      <!-- Sound Toggle -->
+      <button id="soundToggleBtn" onclick="toggleSound()" class="p-2 rounded-xl bg-mesh-elevated/80 hover:bg-mesh-hover text-mesh-muted hover:text-white transition" title="Toggle Message Sounds">
+        <svg id="soundOnIcon" class="w-4 h-4 text-mesh-accentBright" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        </svg>
+        <svg id="soundOffIcon" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zM17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+        </svg>
+      </button>
+
+      <!-- Privacy Shield Button -->
+      <button onclick="openPrivacyModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-mesh-elevated hover:bg-mesh-hover text-mesh-text border border-mesh-border transition" title="Privacy Shield Controls">
+        <svg class="w-4 h-4 text-mesh-accentBright" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+        </svg>
+        <span class="hidden md:inline font-medium">Privacy Shield</span>
+      </button>
+
+      <!-- App Lock Button -->
+      <button onclick="lockApp()" class="p-2 rounded-xl bg-mesh-elevated hover:bg-mesh-hover text-mesh-muted hover:text-white transition" title="Lock App (PIN: 1234)">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+      </button>
+
+      <!-- Panic Wipe Button -->
+      <button onclick="triggerPanicConfirm()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/40 font-semibold transition" title="Erase All Chats Immediately">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" />
+        </svg>
+        <span class="hidden sm:inline">Panic Wipe</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE -->
+  <main id="appWorkspace" class="flex-1 flex overflow-hidden relative">
+
+    <!-- LEFT SIDEBAR: CHATS & NEARBY CONTACTS -->
+    <aside id="sidebarPanel" class="w-full md:w-[350px] lg:w-[390px] bg-mesh-panel border-r border-mesh-border flex flex-col shrink-0 z-20">
+      <!-- Sidebar Header -->
+      <div class="h-14 px-4 bg-mesh-elevated/60 flex items-center justify-between border-b border-mesh-border shrink-0">
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-mesh-accent to-emerald-700 flex items-center justify-center font-bold text-sm text-white shadow">
+              YO
+            </div>
+            <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-mesh-accentBright border-2 border-mesh-panel" title="Visible on Bluetooth"></span>
+          </div>
+          <div>
+            <h1 class="font-semibold text-sm text-white leading-tight">WhisperMesh</h1>
+            <p class="text-[11px] text-mesh-accentBright">Ready on Bluetooth</p>
+          </div>
+        </div>
+
+        <button onclick="openRadarModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-mesh-accent hover:bg-mesh-accentBright text-mesh-bg font-semibold text-xs transition shadow-sm" title="Find Nearby People on Bluetooth">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+          </svg>
+          <span>Find Nearby</span>
+        </button>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="p-2.5 border-b border-mesh-border space-y-2 bg-mesh-panel">
+        <div class="relative">
+          <svg class="w-4 h-4 text-mesh-muted absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input id="searchInput" type="text" oninput="renderChatList()" placeholder="Search chats or nearby people..." class="w-full bg-mesh-elevated text-sm text-mesh-text placeholder-mesh-muted pl-9 pr-3 py-2 rounded-xl border border-transparent focus:border-mesh-accent/50 focus:outline-none transition" />
+        </div>
+
+        <div class="flex items-center gap-1.5 text-xs overflow-x-auto pb-0.5">
+          <button onclick="setFilter('all')" id="filter-all" class="filter-pill px-3 py-1 rounded-full font-medium bg-mesh-accent/20 text-mesh-accentBright border border-mesh-accent/30 transition">All</button>
+          <button onclick="setFilter('direct')" id="filter-direct" class="filter-pill px-3 py-1 rounded-full font-medium bg-mesh-elevated text-mesh-muted hover:text-white transition">Direct Bluetooth</button>
+          <button onclick="setFilter('autoburn')" id="filter-autoburn" class="filter-pill px-3 py-1 rounded-full font-medium bg-mesh-elevated text-mesh-muted hover:text-white transition">🔥 Auto-Burn</button>
+        </div>
+      </div>
+
+      <!-- Privacy Blur Quick Bar -->
+      <div class="px-3.5 py-2 bg-[#0e181e] border-b border-mesh-border flex items-center justify-between text-[11px]">
+        <div class="flex items-center gap-2 text-mesh-muted">
+          <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/></svg>
+          <span>Privacy Blur (Shoulder-Surfing Guard)</span>
+        </div>
+        <button onclick="toggleShoulderBlur()" id="quickBlurToggle" class="font-medium px-2.5 py-0.5 rounded-lg bg-mesh-elevated text-mesh-muted hover:text-white transition">
+          Off
+        </button>
+      </div>
+
+      <!-- Contact List -->
+      <div id="chatListContainer" class="flex-1 overflow-y-auto divide-y divide-mesh-border/40"></div>
+    </aside>
+
+    <!-- RIGHT PANEL: ACTIVE CONVERSATION -->
+    <section id="chatPanel" class="hidden md:flex flex-1 flex-col bg-mesh-bg relative h-full overflow-hidden">
+
+      <!-- Empty State -->
+      <div id="emptyChatState" class="hidden flex-1 flex-col items-center justify-center p-8 text-center chat-wallpaper">
+        <div class="w-20 h-20 rounded-3xl bg-mesh-elevated/80 border border-mesh-border flex items-center justify-center mb-5 text-mesh-accentBright shadow-xl">
+          <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+          </svg>
+        </div>
+        <h2 class="text-xl font-semibold text-white">WhisperMesh Offline Messaging</h2>
+        <p class="text-sm text-mesh-muted max-w-md mt-2 leading-relaxed">
+          Chat privately with people nearby using Bluetooth Mesh—no internet or mobile data needed. Select a conversation or scan for nearby contacts to begin.
+        </p>
+        <button onclick="openRadarModal()" class="mt-6 px-5 py-2.5 rounded-xl bg-mesh-accent hover:bg-mesh-accentBright text-mesh-bg font-semibold text-sm transition shadow-lg">
+          Find Nearby People
+        </button>
+      </div>
+
+      <!-- Active Chat Window -->
+      <div id="activeChatContainer" class="flex-1 flex flex-col h-full overflow-hidden">
+        <!-- Chat Header -->
+        <div class="h-14 px-3 sm:px-5 bg-mesh-elevated/95 backdrop-blur border-b border-mesh-border flex items-center justify-between shrink-0 z-10">
+          <div class="flex items-center gap-3 min-w-0">
+            <!-- Mobile Back Button -->
+            <button onclick="closeMobileChat()" class="md:hidden p-1.5 -ml-1 rounded-lg hover:bg-mesh-hover text-mesh-muted hover:text-white" aria-label="Back to chats">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            </button>
+
+            <div id="chatHeaderAvatar" class="w-9 h-9 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-sm text-white shrink-0">
+              AR
+            </div>
+
+            <div class="min-w-0">
+              <h2 id="chatHeaderName" class="font-semibold text-sm text-white truncate">Alex Rivera</h2>
+              <div class="flex items-center gap-1.5 text-[11px] text-mesh-muted truncate">
+                <span class="w-2 h-2 rounded-full bg-mesh-accentBright shrink-0"></span>
+                <span id="chatHeaderConnection" class="truncate text-mesh-accentBright/95">Bluetooth Direct • 12m</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Header Right: Auto-Burn Status Badge -->
+          <div class="flex items-center gap-2 shrink-0">
+            <div id="headerBurnBadge" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-medium">
+              <span>🔥</span>
+              <span id="headerBurnBadgeText">Auto-Burn: 30s</span>
+            </div>
+            <button onclick="openPrivacyModal()" class="p-2 rounded-xl hover:bg-mesh-hover text-mesh-muted hover:text-white transition" title="Chat Privacy & Security">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Subtle Encryption Banner -->
+        <div class="bg-[#121d24]/90 border-b border-mesh-border/60 px-4 py-1.5 flex items-center justify-center gap-1.5 text-[11px] text-mesh-muted shrink-0">
+          <svg class="w-3.5 h-3.5 text-amber-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          <span class="truncate">Messages are end-to-end encrypted over Bluetooth. No internet required.</span>
+        </div>
+
+        <!-- Messages Feed -->
+        <div id="messagesContainer" class="flex-1 overflow-y-auto p-4 sm:p-6 space-y-2.5 chat-wallpaper"></div>
+
+        <!-- Natural Typing Indicator -->
+        <div id="typingIndicator" class="hidden px-5 py-1.5 bg-mesh-panel/90 border-t border-mesh-border/40 text-xs text-mesh-accentBright flex items-center gap-2 shrink-0">
+          <span class="flex gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-mesh-accentBright animate-bounce"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-mesh-accentBright animate-bounce" style="animation-delay: 0.15s"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-mesh-accentBright animate-bounce" style="animation-delay: 0.3s"></span>
+          </span>
+          <span id="typingIndicatorText">Alex Rivera is typing...</span>
+        </div>
+
+        <!-- Compose Bar -->
+        <form onsubmit="handleSendMessage(event)" class="p-2.5 sm:p-3 bg-mesh-elevated border-t border-mesh-border flex items-center gap-2 shrink-0">
+          <!-- Outgoing Auto-Burn Timer Selector -->
+          <div class="relative flex items-center shrink-0">
+            <select id="composeBurnSelect" onchange="handleBurnTimerChange(this.value)" title="Auto-Burn Timer for outgoing messages" class="bg-mesh-panel hover:bg-mesh-hover text-xs text-amber-300 font-medium pl-3 pr-7 py-2.5 rounded-xl border border-mesh-border focus:outline-none focus:border-amber-400/60 cursor-pointer appearance-none transition">
+              <option value="0" class="bg-mesh-panel text-mesh-text">⏱️ Burn: Off</option>
+              <option value="10" class="bg-mesh-panel text-mesh-text">🔥 10s</option>
+              <option value="30" class="bg-mesh-panel text-mesh-text">🔥 30s</option>
+              <option value="60" class="bg-mesh-panel text-mesh-text">🔥 1 min</option>
+              <option value="read" class="bg-mesh-panel text-mesh-text">👁️ Burn After Read</option>
+            </select>
+            <svg class="w-3.5 h-3.5 text-mesh-muted absolute right-2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+
+          <!-- Message Input -->
+          <input id="messageInput" type="text" autocomplete="off" placeholder="Type a message..." class="flex-1 bg-mesh-panel text-sm text-white placeholder-mesh-muted px-4 py-2.5 rounded-xl border border-mesh-border focus:border-mesh-accent focus:outline-none transition" />
+
+          <!-- Clean Paper-Plane Send Button -->
+          <button type="submit" aria-label="Send message" class="p-2.5 px-4 rounded-xl bg-mesh-accent hover:bg-mesh-accentBright text-mesh-bg font-semibold text-sm flex items-center justify-center gap-1.5 transition shadow-md active:scale-95 shrink-0">
+            <span class="hidden sm:inline">Send</span>
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
+          </button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL 1: BLUETOOTH RADAR SCANNER -->
+  <div id="radarModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-mesh-panel border border-mesh-border rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="px-5 py-4 bg-mesh-elevated border-b border-mesh-border flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-mesh-accent/15 border border-mesh-accent/30 flex items-center justify-center text-mesh-accentBright">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
+          </div>
+          <div>
+            <h3 class="font-semibold text-white text-sm">Nearby Bluetooth Radar</h3>
+            <p class="text-[11px] text-mesh-muted">Searching for people nearby using WhisperMesh...</p>
+          </div>
+        </div>
+        <button onclick="closeRadarModal()" class="p-1.5 rounded-lg hover:bg-mesh-hover text-mesh-muted hover:text-white" aria-label="Close radar">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Radar Animation -->
+      <div class="p-6 flex flex-col items-center justify-center bg-[#091116] border-b border-mesh-border relative overflow-hidden">
+        <div class="relative w-40 h-40 rounded-full border border-mesh-accent/30 flex items-center justify-center">
+          <div class="absolute inset-4 rounded-full border border-mesh-accent/20"></div>
+          <div class="absolute inset-9 rounded-full border border-mesh-accent/20"></div>
+          <div class="absolute inset-0 rounded-full border border-mesh-accentBright/40 pulse-ring"></div>
+          <div class="absolute inset-0 rounded-full radar-sweep" style="background: conic-gradient(from 0deg, rgba(0, 168, 132, 0.35) 0deg, transparent 75deg);"></div>
+          <div class="w-3.5 h-3.5 rounded-full bg-mesh-accentBright shadow-[0_0_12px_#25d366] z-10"></div>
+          <span class="absolute top-6 right-8 w-2.5 h-2.5 rounded-full bg-sky-400 animate-ping"></span>
+          <span class="absolute bottom-8 left-7 w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        </div>
+        <p class="text-xs text-mesh-accentBright mt-3 font-medium">Bluetooth Mesh Active • No Internet Needed</p>
+      </div>
+
+      <!-- Discovered People List -->
+      <div class="p-4 overflow-y-auto space-y-3 flex-1">
+        <div class="flex items-center justify-between text-xs px-1">
+          <span class="text-mesh-muted font-medium">People Nearby</span>
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-1.5 text-mesh-muted cursor-pointer hover:text-white">
+              <input id="techDetailsCheckbox" type="checkbox" onchange="toggleTechDetails(this.checked)" class="rounded accent-emerald-500 cursor-pointer" />
+              <span>Technical details</span>
+            </label>
+            <button onclick="discoverRandomPeer()" class="text-mesh-accentBright hover:underline font-medium">Rescan</button>
+          </div>
+        </div>
+        <div id="radarPeersList" class="space-y-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: PRIVACY SHIELD SETTINGS -->
+  <div id="privacyModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-mesh-panel border border-mesh-border rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+      <div class="px-5 py-4 bg-mesh-elevated border-b border-mesh-border flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-mesh-accent/15 border border-mesh-accent/30 flex items-center justify-center text-mesh-accentBright">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+          </div>
+          <div>
+            <h3 class="font-semibold text-white text-sm">Privacy Shield</h3>
+            <p class="text-[11px] text-mesh-muted">Protect your messages from prying eyes</p>
+          </div>
+        </div>
+        <button onclick="closePrivacyModal()" class="p-1.5 rounded-lg hover:bg-mesh-hover text-mesh-muted hover:text-white" aria-label="Close privacy settings">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="p-5 overflow-y-auto space-y-3.5 text-sm">
+        <!-- Privacy Blur -->
+        <div class="p-3.5 rounded-xl bg-mesh-elevated/60 border border-mesh-border flex items-center justify-between gap-4">
+          <div>
+            <h4 class="font-medium text-white">Privacy Blur</h4>
+            <p class="text-xs text-mesh-muted mt-0.5">Blurs messages and chat previews until you hover or tap them.</p>
+          </div>
+          <button id="modalBlurToggle" onclick="toggleShoulderBlur()" class="w-12 h-6 rounded-full bg-mesh-panel border border-mesh-border p-0.5 transition flex items-center">
+            <span class="w-5 h-5 rounded-full bg-mesh-muted transition-transform"></span>
+          </button>
+        </div>
+
+        <!-- Screenshot Alert -->
+        <div class="p-3.5 rounded-xl bg-mesh-elevated/60 border border-mesh-border space-y-2.5">
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <h4 class="font-medium text-white">Screenshot Alert</h4>
+              <p class="text-xs text-mesh-muted mt-0.5">Obscures the screen and posts a notice in chat if a screenshot is attempted.</p>
+            </div>
+            <button id="modalScreenshotToggle" onclick="toggleScreenshotGuard()" class="w-12 h-6 rounded-full bg-mesh-accent p-0.5 transition flex items-center justify-end">
+              <span class="w-5 h-5 rounded-full bg-white transition-transform"></span>
+            </button>
+          </div>
+          <button onclick="triggerScreenshotAlert()" class="w-full py-2 px-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-medium transition">
+            Test Screenshot Alert
+          </button>
+        </div>
+
+        <!-- App PIN Lock -->
+        <div class="p-3.5 rounded-xl bg-mesh-elevated/60 border border-mesh-border flex items-center justify-between gap-4">
+          <div>
+            <h4 class="font-medium text-white">App PIN Lock</h4>
+            <p class="text-xs text-mesh-muted mt-0.5">Lock WhisperMesh behind your 4-digit PIN (default: 1234).</p>
+          </div>
+          <button onclick="closePrivacyModal(); lockApp();" class="px-3.5 py-2 rounded-xl bg-mesh-panel hover:bg-mesh-hover border border-mesh-border text-xs font-semibold text-white transition shrink-0">
+            Lock Now
+          </button>
+        </div>
+
+        <!-- Panic Wipe -->
+        <div class="p-3.5 rounded-xl bg-red-950/25 border border-red-500/30 flex items-center justify-between gap-4">
+          <div>
+            <h4 class="font-medium text-red-300">Panic Wipe</h4>
+            <p class="text-xs text-mesh-muted mt-0.5">Immediately erase all chats and disconnect nearby Bluetooth pairings.</p>
+          </div>
+          <button onclick="closePrivacyModal(); triggerPanicConfirm();" class="px-3.5 py-2 rounded-xl bg-red-600/25 hover:bg-red-600 text-red-200 hover:text-white border border-red-500/40 text-xs font-semibold transition shrink-0">
+            Wipe All
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: PANIC WIPE CONFIRMATION -->
+  <div id="panicModal" class="fixed inset-0 z-[85] bg-black/80 backdrop-blur-md hidden items-center justify-center p-4">
+    <div class="bg-mesh-panel border border-red-500/40 rounded-2xl max-w-sm w-full p-6 shadow-2xl text-center">
+      <div class="w-14 h-14 rounded-2xl bg-red-500/15 border border-red-500/30 flex items-center justify-center mx-auto mb-4 text-red-500">
+        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      </div>
+      <h3 class="text-lg font-bold text-white">Erase All Chats?</h3>
+      <p class="text-xs text-mesh-muted mt-2 leading-relaxed">
+        This will permanently delete all messages, clear local history, and disconnect all nearby Bluetooth chats. This action cannot be undone.
+      </p>
+      <div class="grid grid-cols-2 gap-3 mt-6">
+        <button onclick="closePanicConfirm()" class="py-2.5 px-4 rounded-xl bg-mesh-elevated hover:bg-mesh-hover text-sm font-medium text-white transition">
+          Cancel
+        </button>
+        <button onclick="executePanicWipe()" class="py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-sm font-semibold text-white shadow-lg shadow-red-600/30 transition">
+          Erase Everything
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. SUBTLE MESSAGE AUDIO FEEDBACK (Web Audio API)
+    // =========================================================================
+    let soundEnabled = true;
+    let audioCtx = null;
+
+    function playTone(type) {
+      if (!soundEnabled) return;
+      try {
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+
+        const now = audioCtx.currentTime;
+        if (type === 'send') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(540, now);
+          osc.frequency.exponentialRampToValueAtTime(840, now + 0.08);
+          gain.gain.setValueAtTime(0.05, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+          osc.start(now);
+          osc.stop(now + 0.1);
+        } else if (type === 'receive') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(660, now);
+          osc.frequency.setValueAtTime(880, now + 0.07);
+          gain.gain.setValueAtTime(0.06, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+          osc.start(now);
+          osc.stop(now + 0.21);
+        } else if (type === 'burn') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(220, now);
+          osc.frequency.exponentialRampToValueAtTime(65, now + 0.28);
+          gain.gain.setValueAtTime(0.04, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+          osc.start(now);
+          osc.stop(now + 0.31);
+        } else if (type === 'alert') {
+          osc.type = 'square';
+          osc.frequency.setValueAtTime(420, now);
+          osc.frequency.setValueAtTime(320, now + 0.1);
+          gain.gain.setValueAtTime(0.05, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+          osc.start(now);
+          osc.stop(now + 0.25);
+        }
+      } catch (e) {
+        // Ignore if browser blocks audio before gesture
+      }
+    }
+
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      document.getElementById('soundOnIcon').classList.toggle('hidden', !soundEnabled);
+      document.getElementById('soundOffIcon').classList.toggle('hidden', soundEnabled);
+      showToast(soundEnabled ? 'Message sounds enabled' : 'Message sounds muted', 'info');
+    }
+
+    // =========================================================================
+    // 2. APPLICATION STATE & NATURAL CONTACTS
+    // =========================================================================
+    const AVATAR_COLORS = [
+      'bg-emerald-600', 'bg-sky-600', 'bg-indigo-600', 'bg-amber-600', 'bg-teal-600', 'bg-rose-600'
+    ];
+
+    const state = {
+      activeChatId: 'peer-alex',
+      filter: 'all',
+      showTechnicalDetails: false,
+      privacy: {
+        shoulderBlur: false,
+        screenshotGuard: true,
+        pinCode: '1234',
+        enteredPin: ''
+      },
+      peers: [
+        {
+          id: 'peer-alex',
+          name: 'Alex Rivera',
+          initials: 'AR',
+          color: 'bg-emerald-600',
+          distance: '12m',
+          signalBars: 4,
+          signalLabel: 'Strong signal',
+          connectionLabel: 'Bluetooth Direct • 12m',
+          isDirect: true,
+          rssi: '-52 dBm',
+          mac: '4A:8F:2C:91:0E:B3',
+          paired: true,
+          burnTimer: '30',
+          unread: 0,
+          lastReplyText: '',
+          lastMessageBurned: false,
+          messages: [
+            {
+              id: 'm1',
+              sender: 'them',
+              text: "Hey! Glad this works over Bluetooth—there's zero cell reception down here.",
+              time: formatTime(Date.now() - 180000),
+              status: 'read',
+              burnDuration: 0,
+              burnAfterRead: false,
+              expiresAt: null
+            },
+            {
+              id: 'm2',
+              sender: 'me',
+              text: "Same here! I turned on the 30s auto-burn timer for anything new we send.",
+              time: formatTime(Date.now() - 95000),
+              status: 'read',
+              burnDuration: 0,
+              burnAfterRead: false,
+              expiresAt: null
+            }
+          ]
+        },
+        {
+          id: 'peer-sarah',
+          name: 'Sarah Chen',
+          initials: 'SC',
+          color: 'bg-sky-600',
+          distance: '28m',
+          signalBars: 3,
+          signalLabel: 'Good signal',
+          connectionLabel: 'Mesh Relay via Alex • 28m',
+          isDirect: false,
+          rssi: '-66 dBm',
+          mac: '91:3D:7A:40:B2:18',
+          paired: true,
+          burnTimer: 'read',
+          unread: 1,
+          lastReplyText: '',
+          lastMessageBurned: false,
+          messages: [
+            {
+              id: 'm3',
+              sender: 'them',
+              text: "Hey! My message is hopping through Alex's phone. Are we still meeting near the main gate?",
+              time: formatTime(Date.now() - 60000),
+              status: 'delivered',
+              burnDuration: 5,
+              burnAfterRead: true,
+              expiresAt: null // Starts counting down only after the user opens Sarah's chat
+            }
+          ]
+        },
+        {
+          id: 'peer-liam',
+          name: 'Liam Patel',
+          initials: 'LP',
+          color: 'bg-indigo-600',
+          distance: '42m',
+          signalBars: 2,
+          signalLabel: 'Fair signal',
+          connectionLabel: 'Mesh Relay • 42m',
+          isDirect: false,
+          rssi: '-76 dBm',
+          mac: 'C1:04:88:77:EA:09',
+          paired: true,
+          burnTimer: '0',
+          unread: 0,
+          lastReplyText: '',
+          lastMessageBurned: false,
+          messages: [
+            {
+              id: 'm4',
+              sender: 'them',
+              text: "Just stepped outside—Bluetooth mesh is still holding up nicely from across the street.",
+              time: formatTime(Date.now() - 320000),
+              status: 'read',
+              burnDuration: 0,
+              burnAfterRead: false,
+              expiresAt: null
+            }
+          ]
+        }
+      ],
+      nearbyDiscoverable: [
+        {
+          id: 'peer-maya',
+          name: 'Maya Lin',
+          initials: 'ML',
+          color: 'bg-teal-600',
+          distance: '16m',
+          signalBars: 4,
+          signalLabel: 'Strong signal',
+          connectionLabel: 'Bluetooth Direct • 16m',
+          isDirect: true,
+          rssi: '-58 dBm',
+          mac: '7B:12:44:55:F9:C2'
+        },
+        {
+          id: 'peer-noah',
+          name: 'Noah Brooks',
+          initials: 'NB',
+          color: 'bg-amber-600',
+          distance: '31m',
+          signalBars: 3,
+          signalLabel: 'Good signal',
+          connectionLabel: 'Mesh Relay via Sarah • 31m',
+          isDirect: false,
+          rssi: '-71 dBm',
+          mac: 'E9:4A:11:D0:63:77'
+        },
+        {
+          id: 'peer-priya',
+          name: 'Priya Sharma',
+          initials: 'PS',
+          color: 'bg-rose-600',
+          distance: '9m',
+          signalBars: 4,
+          signalLabel: 'Strong signal',
+          connectionLabel: 'Bluetooth Direct • 9m',
+          isDirect: true,
+          rssi: '-47 dBm',
+          mac: '5A:88:29:C3:14:FE'
+        }
+      ]
+    };
+
+    // =========================================================================
+    // 3. HELPER UTILITIES
+    // =========================================================================
+    function formatTime(ts) {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatBurnRemaining(msLeft) {
+      const totalSec = Math.max(1, Math.ceil(msLeft / 1000));
+      if (totalSec >= 60) {
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        return `${m}m ${s.toString().padStart(2, '0')}s`;
+      }
+      return `${totalSec}s`;
+    }
+
+    function formatBurnTimerBadge(val) {
+      if (val === '0') return 'Off';
+      if (val === 'read') return 'Burn After Read';
+      if (val === '60') return '1 min';
+      return `${val}s`;
+    }
+
+    function escapeHTML(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function getActivePeer() {
+      return state.peers.find(p => p.id === state.activeChatId && p.paired) || null;
+    }
+
+    function renderSignalBars(count) {
+      let bars = '';
+      for (let i = 1; i <= 4; i++) {
+        const height = i * 3 + 2;
+        const active = i <= count;
+        bars += `<span class="inline-block w-1 rounded-sm ${active ? 'bg-mesh-accentBright' : 'bg-mesh-muted/30'}" style="height:${height}px"></span>`;
+      }
+      return `<span class="inline-flex items-end gap-0.5 h-3.5" aria-hidden="true">${bars}</span>`;
+    }
+
+    function showToast(message, variant = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      const colors = {
+        info: 'bg-mesh-elevated border-mesh-border text-mesh-text',
+        success: 'bg-[#0f2922] border-mesh-accent/50 text-mesh-accentBright',
+        warn: 'bg-amber-950/90 border-amber-500/50 text-amber-200',
+        danger: 'bg-red-950/95 border-red-500/60 text-red-200'
+      };
+      toast.className = `pointer-events-auto px-3.5 py-2.5 rounded-xl border shadow-xl text-xs font-medium flex items-center gap-2 transition-all duration-300 transform translate-x-4 opacity-0 ${colors[variant] || colors.info}`;
+      toast.textContent = message;
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-x-4', 'opacity-0');
+      });
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-x-4');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // =========================================================================
+    // 4. CONTEXT-AWARE NATURAL HUMAN REPLIES (Never Repeats Twice in a Row)
+    // =========================================================================
+    function generateNaturalReply(peer, userMessage) {
+      const text = userMessage.toLowerCase().trim();
+      let candidates = [];
+
+      if (/^(hi|hey|hello|yo|hiya|sup|good\s*(morning|afternoon|evening))\b/.test(text)) {
+        candidates = [
+          "Hey! Signal looks strong on Bluetooth right now. What's up?",
+          "Hi there! Good to hear from you—everything's coming through clearly.",
+          "Hey! Just saw your message pop up. How's it going?"
+        ];
+      } else if (/(where|meet|location|here|gate|coming|way)/.test(text)) {
+        candidates = [
+          "I'm just a short walk away—give me about 5 minutes and I'll be right there.",
+          "Still near the main entrance! Let me know when you're close.",
+          "Heading over now. Stay within Bluetooth range so we don't lose connection!"
+        ];
+      } else if (/(thank|thx|ty|appreciate)/.test(text)) {
+        candidates = [
+          "Anytime! Glad we have a reliable offline backup.",
+          "No problem at all!",
+          "Happy to help—just ping me if you need anything else."
+        ];
+      } else if (/(burn|secret|private|timer|disappear|delete)/.test(text)) {
+        candidates = [
+          "Smart call. Auto-burn makes it much easier to keep things private.",
+          "Got it—I'll keep the disappearing timer on for this chat too.",
+          "Totally agree, nice knowing messages vanish automatically once we read them."
+        ];
+      } else if (/(signal|bluetooth|offline|internet|wifi|network|mesh)/.test(text)) {
+        candidates = [
+          "Honestly surprised how smooth the Bluetooth connection feels without any Wi-Fi.",
+          "Signal is holding steady on my side! No internet needed at all.",
+          "Yeah, offline mesh is a lifesaver when cell service drops out."
+        ];
+      } else if (text.includes('?')) {
+        candidates = [
+          "Yep, sounds good to me! Just let me know when you're ready.",
+          "Good question—I think we're all set on my end. How about you?",
+          "For sure! Give me a minute and I'll confirm the details."
+        ];
+      } else if (/^(ok|okay|cool|great|sure|yes|yeah|yep|sounds good|got it)\b/.test(text)) {
+        candidates = [
+          "Awesome, talk soon!",
+          "Sounds like a plan 👍",
+          "Perfect—I'll keep my phone nearby in case you message again."
+        ];
+      } else {
+        candidates = [
+          "Got your message! Coming through loud and clear over Bluetooth.",
+          "Makes sense! I'm right nearby if you want to catch up in person.",
+          "Good to know—thanks for keeping me in the loop!",
+          "Copy that! Everything looks good from my side."
+        ];
+      }
+
+      // Filter out the exact last reply sent by this contact so it never repeats back-to-back
+      const filtered = candidates.filter(c => c !== peer.lastReplyText);
+      const pool = filtered.length > 0 ? filtered : candidates;
+      const chosen = pool[Math.floor(Math.random() * pool.length)];
+      peer.lastReplyText = chosen;
+      return chosen;
+    }
+
+    // =========================================================================
+    // 5. SIDEBAR & CHAT LIST RENDERING
+    // =========================================================================
+    function setFilter(filterName) {
+      state.filter = filterName;
+      document.querySelectorAll('.filter-pill').forEach(btn => {
+        btn.className = 'filter-pill px-3 py-1 rounded-full font-medium bg-mesh-elevated text-mesh-muted hover:text-white transition';
+      });
+      const activeBtn = document.getElementById(`filter-${filterName}`);
+      if (activeBtn) {
+        activeBtn.className = 'filter-pill px-3 py-1 rounded-full font-medium bg-mesh-accent/20 text-mesh-accentBright border border-mesh-accent/30 transition';
+      }
+      renderChatList();
+    }
+
+    function renderChatList() {
+      const container = document.getElementById('chatListContainer');
+      const query = document.getElementById('searchInput').value.trim().toLowerCase();
+
+      const pairedPeers = state.peers.filter(p => p.paired);
+      document.getElementById('topStatusSummary').textContent =
+        `Offline • Bluetooth Mesh Active • ${pairedPeers.length} Nearby`;
+
+      const filtered = pairedPeers.filter(peer => {
+        const matchesQuery =
+          peer.name.toLowerCase().includes(query) ||
+          peer.connectionLabel.toLowerCase().includes(query);
+        if (!matchesQuery) return false;
+        if (state.filter === 'direct') return peer.isDirect;
+        if (state.filter === 'autoburn') return peer.burnTimer !== '0';
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="p-8 text-center text-xs text-mesh-muted">
+            <p>${pairedPeers.length === 0 ? 'No active Bluetooth chats yet.' : 'No matching chats found.'}</p>
+            <button onclick="openRadarModal()" class="mt-3 text-mesh-accentBright hover:underline font-medium">Find nearby people</button>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = filtered.map(peer => {
+        const isActive = peer.id === state.activeChatId;
+        const lastMsg = peer.messages[peer.messages.length - 1];
+
+        let previewText = 'Start chatting over Bluetooth';
+        let previewItalic = false;
+
+        if (peer.lastMessageBurned) {
+          previewText = '🔥 Message disappeared';
+          previewItalic = true;
+        } else if (lastMsg) {
+          previewText = lastMsg.isSystem
+            ? lastMsg.text
+            : `${lastMsg.sender === 'me' ? 'You: ' : ''}${lastMsg.text}`;
+        }
+
+        const previewTime = lastMsg ? lastMsg.time : (peer.lastMessageBurned ? 'Just now' : '');
+
+        return `
+          <div onclick="selectChat('${peer.id}')" class="chat-item px-3.5 py-3 flex items-center gap-3 cursor-pointer transition ${isActive ? 'bg-mesh-elevated' : 'hover:bg-mesh-elevated/50'}">
+            <div class="relative shrink-0">
+              <div class="w-11 h-11 rounded-full ${peer.color} flex items-center justify-center font-bold text-sm text-white shadow">
+                ${escapeHTML(peer.initials)}
+              </div>
+              <span class="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-mesh-accentBright border-2 border-mesh-panel"></span>
+            </div>
+
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="font-semibold text-sm text-white truncate">${escapeHTML(peer.name)}</span>
+                  ${peer.burnTimer !== '0' ? `<span class="text-[10px] bg-amber-500/15 text-amber-300 px-1.5 py-0.5 rounded-md font-medium shrink-0" title="Auto-Burn Active">🔥 ${peer.burnTimer === 'read' ? 'Read' : (peer.burnTimer === '60' ? '1m' : peer.burnTimer + 's')}</span>` : ''}
+                </div>
+                <span class="text-[11px] ${peer.unread > 0 ? 'text-mesh-accentBright font-semibold' : 'text-mesh-muted'} shrink-0">${previewTime}</span>
+              </div>
+
+              <div class="flex items-center justify-between gap-2 mt-0.5">
+                <p class="text-xs ${previewItalic ? 'italic text-amber-300/80' : 'text-mesh-muted'} truncate sensitive-text">${escapeHTML(previewText)}</p>
+                ${peer.unread > 0 ? `<span class="px-1.5 py-0.5 min-w-[20px] text-center rounded-full bg-mesh-accentBright text-mesh-bg font-bold text-[10px] shrink-0">${peer.unread}</span>` : ''}
+              </div>
+
+              <div class="flex items-center gap-1.5 mt-1 text-[11px] text-mesh-muted/80">
+                ${renderSignalBars(peer.signalBars)}
+                <span class="truncate">${escapeHTML(peer.connectionLabel)}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // =========================================================================
+    // 6. ACTIVE CHAT & MESSAGE RENDERING
+    // =========================================================================
+    function selectChat(peerId) {
+      state.activeChatId = peerId;
+      const peer = getActivePeer();
+      if (!peer) return;
+
+      peer.unread = 0;
+
+      // Trigger Burn-After-Reading countdowns for incoming unread messages now that they are viewed
+      const now = Date.now();
+      peer.messages.forEach(msg => {
+        if (msg.sender === 'them' && msg.burnAfterRead && !msg.expiresAt && !msg.isBurning) {
+          msg.expiresAt = now + msg.burnDuration * 1000;
+        }
+      });
+
+      // Responsive mobile view switch
+      if (window.innerWidth < 768) {
+        document.getElementById('sidebarPanel').classList.add('hidden');
+        const chatPanel = document.getElementById('chatPanel');
+        chatPanel.classList.remove('hidden');
+        chatPanel.classList.add('flex');
+      }
+
+      document.getElementById('emptyChatState').classList.add('hidden');
+      const activeContainer = document.getElementById('activeChatContainer');
+      activeContainer.classList.remove('hidden');
+      activeContainer.classList.add('flex');
+
+      // Update Header
+      const avatar = document.getElementById('chatHeaderAvatar');
+      avatar.className = `w-9 h-9 rounded-full ${peer.color} flex items-center justify-center font-bold text-sm text-white shrink-0`;
+      avatar.textContent = peer.initials;
+
+      document.getElementById('chatHeaderName').textContent = peer.name;
+      document.getElementById('chatHeaderConnection').textContent = peer.connectionLabel;
+
+      // Sync compose burn selector and header badge
+      document.getElementById('composeBurnSelect').value = peer.burnTimer;
+      updateHeaderBurnBadge(peer.burnTimer);
+
+      renderChatList();
+      renderMessages(true);
+    }
+
+    function updateHeaderBurnBadge(burnVal) {
+      const badge = document.getElementById('headerBurnBadge');
+      const badgeText = document.getElementById('headerBurnBadgeText');
+      if (burnVal === '0') {
+        badge.classList.add('hidden');
+        badge.classList.remove('sm:flex');
+      } else {
+        badge.classList.remove('hidden');
+        badge.classList.add('sm:flex');
+        badgeText.textContent = `Auto-Burn: ${formatBurnTimerBadge(burnVal)}`;
+      }
+    }
+
+    function handleBurnTimerChange(val) {
+      const peer = getActivePeer();
+      if (!peer) return;
+      peer.burnTimer = val;
+      updateHeaderBurnBadge(val);
+      renderChatList();
+      const desc = val === '0'
+        ? 'Auto-burn turned off for this chat'
+        : `Outgoing messages will auto-burn (${formatBurnTimerBadge(val)})`;
+      showToast(desc, 'info');
+    }
+
+    function closeMobileChat() {
+      document.getElementById('sidebarPanel').classList.remove('hidden');
+      const chatPanel = document.getElementById('chatPanel');
+      chatPanel.classList.add('hidden');
+      chatPanel.classList.remove('flex');
+    }
+
+    function renderTicks(status) {
+      if (status === 'sending') {
+        return `<span class="text-white/55 text-[11px]" title="Sending over Bluetooth">🕒</span>`;
+      }
+      if (status === 'delivered') {
+        return `<span class="text-white/65 text-[11px] tracking-tighter" title="Delivered">✓✓</span>`;
+      }
+      return `<span class="text-sky-300 text-[11px] tracking-tighter font-semibold" title="Read">✓✓</span>`;
+    }
+
+    function renderMessages(scrollToBottom = false) {
+      const peer = getActivePeer();
+      const container = document.getElementById('messagesContainer');
+      if (!peer) return;
+
+      if (peer.messages.length === 0) {
+        container.innerHTML = `
+          <div class="h-full flex flex-col items-center justify-center text-center p-6">
+            <div class="px-4 py-2.5 rounded-xl bg-mesh-panel/90 border border-mesh-border text-xs text-mesh-muted max-w-sm">
+              🔒 No messages here yet. Send a message over Bluetooth to start chatting privately.
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      const now = Date.now();
+      container.innerHTML = peer.messages.map(msg => {
+        if (msg.isSystem) {
+          return `
+            <div id="msg-${msg.id}" class="flex justify-center my-2 msg-enter">
+              <div class="px-3.5 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/35 text-amber-200 text-xs font-medium text-center max-w-md shadow-sm">
+                ⚠️ ${escapeHTML(msg.text)}
+              </div>
+            </div>
+          `;
+        }
+
+        const isMe = msg.sender === 'me';
+        const hasBurn = msg.burnDuration > 0;
+        let burnLabelText = '';
+        let progressPct = 100;
+
+        if (hasBurn) {
+          if (msg.expiresAt) {
+            const msLeft = Math.max(0, msg.expiresAt - now);
+            burnLabelText = formatBurnRemaining(msLeft);
+            progressPct = Math.max(0, Math.min(100, (msLeft / (msg.burnDuration * 1000)) * 100));
+          } else {
+            burnLabelText = msg.burnAfterRead ? 'Burns on read' : formatBurnRemaining(msg.burnDuration * 1000);
+          }
+        }
+
+        return `
+          <div id="msg-${msg.id}" class="flex ${isMe ? 'justify-end' : 'justify-start'} msg-enter ${msg.isBurning ? 'burning-message' : ''}">
+            <div onclick="this.classList.toggle('revealed')" class="message-bubble max-w-[82%] sm:max-w-[68%] rounded-2xl px-3.5 py-2 shadow-sm relative border ${
+              isMe
+                ? 'bg-mesh-outgoing border-emerald-700/40 rounded-tr-sm'
+                : 'bg-mesh-incoming border-mesh-border rounded-tl-sm'
+            }">
+              <!-- Clean Message Text -->
+              <p class="text-[14.5px] text-white leading-relaxed break-words sensitive-text">${escapeHTML(msg.text)}</p>
+
+              <!-- Auto-Burn Countdown Bar (Only if message has burn timer) -->
+              ${hasBurn ? `
+                <div class="mt-2 space-y-1">
+                  <div class="w-full h-1 bg-black/30 rounded-full overflow-hidden">
+                    <div data-burn-bar="${msg.id}" class="h-full bg-gradient-to-r from-amber-400 to-red-500 transition-all duration-200" style="width: ${progressPct}%"></div>
+                  </div>
+                </div>
+              ` : ''}
+
+              <!-- Footer: Optional Burn Countdown + Timestamp + Ticks -->
+              <div class="flex items-center justify-end gap-2 mt-1">
+                ${hasBurn ? `
+                  <span class="text-[10px] text-amber-300 font-medium flex items-center gap-0.5 mr-auto" data-burn-label="${msg.id}">
+                    🔥 ${burnLabelText}
+                  </span>
+                ` : ''}
+                <span class="text-[10px] text-white/60">${msg.time}</span>
+                ${isMe ? `<span id="status-${msg.id}">${renderTicks(msg.status)}</span>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      if (scrollToBottom) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+
+    // =========================================================================
+    // 7. SENDING MESSAGES & NATURAL PEER REPLIES
+    // =========================================================================
+    function resolveBurnSettings(timerChoice) {
+      if (timerChoice === '0') return { burnDuration: 0, burnAfterRead: false };
+      if (timerChoice === 'read') return { burnDuration: 5, burnAfterRead: true };
+      return { burnDuration: parseInt(timerChoice, 10) || 0, burnAfterRead: false };
+    }
+
+    function handleSendMessage(e) {
+      e.preventDefault();
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const peer = getActivePeer();
+      if (!peer) return;
+
+      const timerChoice = document.getElementById('composeBurnSelect').value;
+      const { burnDuration, burnAfterRead } = resolveBurnSettings(timerChoice);
+
+      const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      const newMsg = {
+        id: msgId,
+        sender: 'me',
+        text,
+        time: formatTime(Date.now()),
+        status: 'sending',
+        burnDuration,
+        burnAfterRead,
+        expiresAt: burnDuration > 0 && !burnAfterRead ? Date.now() + burnDuration * 1000 : null,
+        isBurning: false
+      };
+
+      peer.lastMessageBurned = false;
+      peer.messages.push(newMsg);
+      input.value = '';
+      playTone('send');
+      renderMessages(true);
+      renderChatList();
+
+      // Smooth Bluetooth delivery lifecycle
+      setTimeout(() => {
+        if (!peer.paired) return;
+        newMsg.status = 'delivered';
+        const el = document.getElementById(`status-${msgId}`);
+        if (el) el.innerHTML = renderTicks('delivered');
+      }, 450);
+
+      setTimeout(() => {
+        if (!peer.paired) return;
+        newMsg.status = 'read';
+        const el = document.getElementById(`status-${msgId}`);
+        if (el) el.innerHTML = renderTicks('read');
+
+        // Start Burn-After-Reading countdown once peer reads the message
+        if (newMsg.burnAfterRead && !newMsg.expiresAt && !newMsg.isBurning) {
+          newMsg.expiresAt = Date.now() + newMsg.burnDuration * 1000;
+        }
+      }, 1100);
+
+      // Schedule natural human reply
+      setTimeout(() => {
+        triggerPeerReply(peer, text);
+      }, 1600);
+    }
+
+    function triggerPeerReply(peer, userMessage) {
+      if (!peer || !peer.paired) return;
+      const typingEl = document.getElementById('typingIndicator');
+      const typingText = document.getElementById('typingIndicatorText');
+
+      if (state.activeChatId === peer.id) {
+        typingText.textContent = `${peer.name} is typing...`;
+        typingEl.classList.remove('hidden');
+      }
+
+      setTimeout(() => {
+        if (state.activeChatId === peer.id) {
+          typingEl.classList.add('hidden');
+        }
+        if (!peer.paired) return;
+
+        const replyText = generateNaturalReply(peer, userMessage);
+        const { burnDuration, burnAfterRead } = resolveBurnSettings(peer.burnTimer);
+        const isViewingNow = state.activeChatId === peer.id;
+
+        const incomingMsg = {
+          id: 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          sender: 'them',
+          text: replyText,
+          time: formatTime(Date.now()),
+          status: 'read',
+          burnDuration,
+          burnAfterRead,
+          // Start immediately if fixed timer, or on-view if Burn After Reading
+          expiresAt: burnDuration > 0 && (!burnAfterRead || isViewingNow)
+            ? Date.now() + burnDuration * 1000
+            : null,
+          isBurning: false
+        };
+
+        peer.lastMessageBurned = false;
+        peer.messages.push(incomingMsg);
+
+        if (isViewingNow) {
+          renderMessages(true);
+        } else {
+          peer.unread = (peer.unread || 0) + 1;
+        }
+
+        playTone('receive');
+        renderChatList();
+      }, 1100);
+    }
+
+    // =========================================================================
+    // 8. SINGLE GLOBAL AUTO-BURN ENGINE (Timestamp-Based, Zero Leaks)
+    // =========================================================================
+    function startAutoBurnEngine() {
+      setInterval(() => {
+        const now = Date.now();
+
+        state.peers.forEach(peer => {
+          if (!peer.paired) return;
+
+          peer.messages.forEach(msg => {
+            if (msg.burnDuration <= 0 || !msg.expiresAt || msg.isBurning) return;
+
+            const msLeft = msg.expiresAt - now;
+
+            if (msLeft <= 0) {
+              msg.isBurning = true;
+              const isLatestMessage = peer.messages[peer.messages.length - 1]?.id === msg.id;
+
+              const domEl = document.getElementById(`msg-${msg.id}`);
+              if (domEl) {
+                domEl.classList.add('burning-message');
+              }
+              if (state.activeChatId === peer.id) {
+                playTone('burn');
+              }
+
+              setTimeout(() => {
+                peer.messages = peer.messages.filter(m => m.id !== msg.id);
+                if (isLatestMessage) {
+                  peer.lastMessageBurned = true;
+                }
+                if (state.activeChatId === peer.id) {
+                  renderMessages(false);
+                }
+                renderChatList();
+              }, 740);
+            } else if (state.activeChatId === peer.id) {
+              // Smooth in-place DOM update for countdown label & progress bar
+              const pct = Math.max(0, Math.min(100, (msLeft / (msg.burnDuration * 1000)) * 100));
+              const labelEl = document.querySelector(`[data-burn-label="${msg.id}"]`);
+              const barEl = document.querySelector(`[data-burn-bar="${msg.id}"]`);
+              if (labelEl) labelEl.textContent = `🔥 ${formatBurnRemaining(msLeft)}`;
+              if (barEl) barEl.style.width = `${pct}%`;
+            }
+          });
+        });
+      }, 200);
+    }
+
+    // =========================================================================
+    // 9. BLUETOOTH RADAR SCANNER & PEER PAIRING
+    // =========================================================================
+    function openRadarModal() {
+      const modal = document.getElementById('radarModal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      renderRadarPeers();
+    }
+
+    function closeRadarModal() {
+      const modal = document.getElementById('radarModal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function toggleTechDetails(checked) {
+      state.showTechnicalDetails = checked;
+      renderRadarPeers();
+    }
+
+    function renderRadarPeers() {
+      const list = document.getElementById('radarPeersList');
+      const allNodes = [
+        ...state.peers.filter(p => p.paired).map(p => ({ ...p, isConnected: true })),
+        ...state.nearbyDiscoverable.map(p => ({ ...p, isConnected: false }))
+      ];
+
+      list.innerHTML = allNodes.map(node => `
+        <div class="p-3 rounded-xl bg-mesh-elevated/75 border border-mesh-border flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-9 h-9 rounded-full ${node.color} flex items-center justify-center font-bold text-xs text-white shrink-0">
+              ${escapeHTML(node.initials)}
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold text-xs text-white truncate">${escapeHTML(node.name)}</span>
+                ${renderSignalBars(node.signalBars)}
+              </div>
+              <p class="text-[11px] text-mesh-muted truncate">
+                ${escapeHTML(node.distance)} away • ${escapeHTML(node.signalLabel)}
+              </p>
+              ${state.showTechnicalDetails ? `
+                <p class="text-[10px] font-mono text-mesh-cyan/90 mt-0.5 truncate">
+                  RSSI ${escapeHTML(node.rssi)} • MAC ${escapeHTML(node.mac)}
+                </p>
+              ` : ''}
+            </div>
+          </div>
+
+          ${node.isConnected
+            ? `<button onclick="closeRadarModal(); selectChat('${node.id}');" class="px-3 py-1.5 rounded-lg bg-mesh-accent/20 text-mesh-accentBright border border-mesh-accent/30 text-xs font-semibold shrink-0">Chat</button>`
+            : `<button onclick="pairNewPeer('${node.id}')" class="px-3 py-1.5 rounded-lg bg-mesh-accent hover:bg-mesh-accentBright text-mesh-bg text-xs font-semibold transition shrink-0">Connect</button>`
+          }
+        </div>
+      `).join('');
+    }
+
+    function pairNewPeer(nodeId) {
+      const idx = state.nearbyDiscoverable.findIndex(p => p.id === nodeId);
+      if (idx === -1) return;
+
+      const [node] = state.nearbyDiscoverable.splice(idx, 1);
+      const newPeer = {
+        ...node,
+        paired: true,
+        burnTimer: '30',
+        unread: 0,
+        lastReplyText: '',
+        lastMessageBurned: false,
+        messages: [
+          {
+            id: 'm-' + Date.now(),
+            sender: 'them',
+            text: `Hey! Just connected over Bluetooth. Good to see you nearby!`,
+            time: formatTime(Date.now()),
+            status: 'read',
+            burnDuration: 0,
+            burnAfterRead: false,
+            expiresAt: null
+          }
+        ]
+      };
+
+      state.peers.unshift(newPeer);
+      playTone('receive');
+      showToast(`Connected with ${newPeer.name} over Bluetooth`, 'success');
+      renderChatList();
+      closeRadarModal();
+      selectChat(newPeer.id);
+    }
+
+    function discoverRandomPeer() {
+      const names = [
+        { name: 'Jordan Lee', initials: 'JL' },
+        { name: 'Elena Gomez', initials: 'EG' },
+        { name: 'Samir Rao', initials: 'SR' },
+        { name: 'Chloe Park', initials: 'CP' }
+      ];
+      const pick = names[Math.floor(Math.random() * names.length)];
+      const dist = Math.floor(7 + Math.random() * 35);
+      const isDirect = dist <= 22;
+      const bars = dist <= 15 ? 4 : (dist <= 28 ? 3 : 2);
+      const hex = () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0').toUpperCase();
+
+      const newNode = {
+        id: 'peer-nearby-' + Date.now(),
+        name: pick.name,
+        initials: pick.initials,
+        color: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+        distance: `${dist}m`,
+        signalBars: bars,
+        signalLabel: bars === 4 ? 'Strong signal' : (bars === 3 ? 'Good signal' : 'Fair signal'),
+        connectionLabel: isDirect ? `Bluetooth Direct • ${dist}m` : `Mesh Relay • ${dist}m`,
+        isDirect,
+        rssi: `-${44 + dist} dBm`,
+        mac: `${hex()}:${hex()}:${hex()}:${hex()}:${hex()}:${hex()}`
+      };
+
+      state.nearbyDiscoverable.unshift(newNode);
+      playTone('send');
+      renderRadarPeers();
+      showToast(`Found ${newNode.name} (${newNode.distance} away)`, 'info');
+    }
+
+    // =========================================================================
+    // 10. PRIVACY SHIELD, SCREENSHOT ALERT, PIN LOCK & PANIC WIPE
+    // =========================================================================
+    function openPrivacyModal() {
+      const modal = document.getElementById('privacyModal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      syncPrivacyUI();
+    }
+
+    function closePrivacyModal() {
+      const modal = document.getElementById('privacyModal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function toggleShoulderBlur() {
+      state.privacy.shoulderBlur = !state.privacy.shoulderBlur;
+      document.body.classList.toggle('privacy-blur-active', state.privacy.shoulderBlur);
+      syncPrivacyUI();
+      showToast(
+        state.privacy.shoulderBlur
+          ? 'Privacy Blur enabled (hover or tap a message to reveal)'
+          : 'Privacy Blur turned off',
+        'info'
+      );
+    }
+
+    function toggleScreenshotGuard() {
+      state.privacy.screenshotGuard = !state.privacy.screenshotGuard;
+      syncPrivacyUI();
+      showToast(`Screenshot Alert ${state.privacy.screenshotGuard ? 'enabled' : 'disabled'}`, 'info');
+    }
+
+    function syncPrivacyUI() {
+      const quickBtn = document.getElementById('quickBlurToggle');
+      if (quickBtn) {
+        quickBtn.textContent = state.privacy.shoulderBlur ? 'On' : 'Off';
+        quickBtn.className = state.privacy.shoulderBlur
+          ? 'font-medium px-2.5 py-0.5 rounded-lg bg-mesh-accent/20 text-mesh-accentBright border border-mesh-accent/30 transition'
+          : 'font-medium px-2.5 py-0.5 rounded-lg bg-mesh-elevated text-mesh-muted hover:text-white transition';
+      }
+      updateSwitchStyle('modalBlurToggle', state.privacy.shoulderBlur);
+      updateSwitchStyle('modalScreenshotToggle', state.privacy.screenshotGuard);
+    }
+
+    function updateSwitchStyle(id, isOn) {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      const knob = btn.querySelector('span');
+      if (isOn) {
+        btn.className = 'w-12 h-6 rounded-full bg-mesh-accent p-0.5 transition flex items-center justify-end';
+        knob.className = 'w-5 h-5 rounded-full bg-white transition-transform';
+      } else {
+        btn.className = 'w-12 h-6 rounded-full bg-mesh-panel border border-mesh-border p-0.5 transition flex items-center justify-start';
+        knob.className = 'w-5 h-5 rounded-full bg-mesh-muted transition-transform';
+      }
+    }
+
+    function triggerScreenshotAlert() {
+      if (!state.privacy.screenshotGuard) return;
+      playTone('alert');
+
+      const workspace = document.getElementById('appWorkspace');
+      workspace.classList.add('blur-lg');
+      setTimeout(() => workspace.classList.remove('blur-lg'), 1300);
+
+      const peer = getActivePeer();
+      if (peer) {
+        peer.lastMessageBurned = false;
+        peer.messages.push({
+          id: 'sys-' + Date.now(),
+          isSystem: true,
+          text: `Screenshot attempt detected at ${formatTime(Date.now())}`,
+          time: formatTime(Date.now()),
+          burnDuration: 0
+        });
+        renderMessages(true);
+        renderChatList();
+      }
+      showToast('Screenshot attempt detected', 'danger');
+    }
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'PrintScreen') {
+        triggerScreenshotAlert();
+      }
+    });
+
+    // App PIN Lock (Default: 1234)
+    function lockApp() {
+      state.privacy.enteredPin = '';
+      updatePinDots();
+      document.getElementById('pinError').textContent = '';
+      const lockModal = document.getElementById('appLockModal');
+      lockModal.classList.remove('hidden');
+      lockModal.classList.add('flex');
+    }
+
+    function enterPinDigit(digit) {
+      if (state.privacy.enteredPin.length >= 4) return;
+      state.privacy.enteredPin += digit;
+      playTone('send');
+      updatePinDots();
+
+      if (state.privacy.enteredPin.length === 4) {
+        if (state.privacy.enteredPin === state.privacy.pinCode) {
+          const lockModal = document.getElementById('appLockModal');
+          lockModal.classList.add('hidden');
+          lockModal.classList.remove('flex');
+          showToast('WhisperMesh unlocked', 'success');
+        } else {
+          playTone('alert');
+          document.getElementById('pinError').textContent = 'Incorrect PIN (Default: 1234)';
+          setTimeout(() => {
+            state.privacy.enteredPin = '';
+            updatePinDots();
+          }, 450);
+        }
+      }
+    }
+
+    function clearPinDigit() {
+      state.privacy.enteredPin = state.privacy.enteredPin.slice(0, -1);
+      document.getElementById('pinError').textContent = '';
+      updatePinDots();
+    }
+
+    function updatePinDots() {
+      const dots = document.getElementById('pinDots').children;
+      for (let i = 0; i < dots.length; i++) {
+        if (i < state.privacy.enteredPin.length) {
+          dots[i].className = 'w-3.5 h-3.5 rounded-full bg-mesh-accentBright border border-mesh-accentBright scale-110 transition-all';
+        } else {
+          dots[i].className = 'w-3.5 h-3.5 rounded-full border border-mesh-muted transition-all';
+        }
+      }
+    }
+
+    // Panic Wipe
+    function triggerPanicConfirm() {
+      const modal = document.getElementById('panicModal');
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+    }
+
+    function closePanicConfirm() {
+      const modal = document.getElementById('panicModal');
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+    }
+
+    function executePanicWipe() {
+      closePanicConfirm();
+      closePrivacyModal();
+      closeRadarModal();
+      document.getElementById('appLockModal').classList.add('hidden');
+
+      const flash = document.getElementById('panicOverlay');
+      flash.classList.remove('hidden');
+      flash.classList.add('panic-flash');
+      playTone('burn');
+      setTimeout(() => {
+        flash.classList.add('hidden');
+        flash.classList.remove('panic-flash');
+      }, 800);
+
+      // Clear all chats and pairings cleanly
+      state.peers.forEach(p => {
+        p.messages = [];
+        p.paired = false;
+        p.unread = 0;
+        p.lastMessageBurned = false;
+      });
+      state.activeChatId = null;
+
+      document.getElementById('activeChatContainer').classList.add('hidden');
+      document.getElementById('activeChatContainer').classList.remove('flex');
+      const emptyState = document.getElementById('emptyChatState');
+      emptyState.classList.remove('hidden');
+      emptyState.classList.add('flex');
+
+      renderChatList();
+      showToast('All chats and Bluetooth pairings have been erased.', 'danger');
+    }
+
+    // =========================================================================
+    // 11. INITIALIZATION
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      renderChatList();
+      selectChat('peer-alex');
+      syncPrivacyUI();
+      startAutoBurnEngine();
+    });
+  </script>
+</body>
+</html>
